@@ -1,0 +1,25 @@
+[config]
+# Player command to play the files
+#
+# Examples:
+#   mpv %(file)s
+#   mpg123 %(file)s
+player = "mpv"
+
+# Media directory to store the files
+media_dir = "<your home>/podcasts"
+
+# List of feeds of your podcasts, in the format:
+#   podcast_id: http://example.org/rss/feed.xml
+[podcasts]
+1a = "https://feeds.npr.org/510316/podcast.xml"
+BegToDiffer = "https://feeds.megaphone.fm/WWO9642284243"
+TheEconomist = "https://rss.acast.com/theeconomisteditorspicks"
+LeftRightAndCenter = "https://leftrightandcenter-feed.kcrw.com"
+NewsHour = "https://www.pbs.org/newshour/feeds/rss/podcasts/show"
+WashingtonWeek = "http://feeds.pbs.org/pbs/weta/washingtonweek-audio"
+PoliticalGabFest = "https://feeds.megaphone.fm/slatespoliticalgabfest"
+TheBulwark = "https://feeds.megaphone.fm/WWO9257218156"
+Neoliberal = "https://neolibpodcast.libsyn.com/rss"
+UpFirst = "https://feeds.npr.org/510318/podcast.xml"
+WorldNewsThisWeek = "https://feeds.megaphone.fm/ESP8938831552"
