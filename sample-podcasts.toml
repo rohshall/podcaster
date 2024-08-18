@@ -1,0 +1,17 @@
+[config]
+# Player command to play the files
+#
+# Examples:
+#   mpv %(file)s
+#   mpg123 %(file)s
+player = "mpv"
+
+# Media directory to store the files
+media_dir = "/home/salil/Music"
+
+# List of feeds of your podcasts, in the format:
+#   podcast_id: http://example.org/rss/feed.xml
+[podcasts]
+BegToDiffer = "https://audioboom.com/channels/5114288.rss"
+WashingtonWeek = "http://feeds.pbs.org/pbs/weta/washingtonweek-audio"
+UpFirst = "https://feeds.npr.org/510318/podcast.xml"
