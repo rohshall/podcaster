@@ -1,7 +1,11 @@
 import util.{Try, Success, Failure}
+import scala.concurrent.ExecutionContext.Implicits.global
+import scala.concurrent.{Future, Await}
+import scala.concurrent.duration.Duration
 import scala.jdk.CollectionConverters.*
 import scala.xml._
 import sttp.client4._
+import sttp.client4.httpclient.HttpClientFutureBackend
 import java.net.URI
 import java.nio.file._
 import org.tomlj._
@@ -39,46 +43,72 @@ def extractFeed(xmlString: String): Seq[Episode] = {
 }
 
 // Download the podcast episode
-def downloadEpisode(podcastId: String, episode: Episode, mediaDir: Path): Unit = {
+def downloadEpisode(podcastId: String, episode: Episode, mediaDir: Path): Future[Either[String, Path]] = {
   val downloadFileName = Paths.get(new URI(episode.url).getPath).getFileName
   val downloadPath = mediaDir.resolve(downloadFileName)
   if !Files.exists(downloadPath) then
-    println(s"Downloading $podcastId episode ${episode.title} published at ${episode.pubDate} from ${episode.url}")
+    println(s"$podcastId: downloading episode ${episode.title} published at ${episode.pubDate} from ${episode.url}")
     val request = basicRequest.get(uri"${episode.url}")
                               .response(asPath(downloadPath))
-    val backend = DefaultSyncBackend()
-    val response = request.send(backend)
-    if response.code.isSuccess then
-      println("episode downloaded")
-    else
-      println("Failed to download")
+    val backend = HttpClientFutureBackend()
+    request.send(backend).map(response => response.body)
   else
-    println("File already downloaded, skipping..")
+    println(s"$podcastId: episode ${episode.title} already downloaded, skipping..")
+    Future { Right(downloadPath) }
 }
 
-def downloadPodcast(podcastId: String, podcastUrl: String, mediaDir: Path): Unit = {
+def sequence[A, B](s: Seq[Either[A, B]]): Either[A, Seq[B]] =
+  s.foldRight(Right(Nil): Either[A, List[B]]) {
+    (e, acc) => for (xs <- acc.right; x <- e.right) yield x :: xs
+  }
+
+// Downloads <count> episodes of the podcast
+def downloadEpisodes(podcastId: String, episodes: Seq[Episode], mediaDir: Path, count: Int = 1): Future[Either[String, Seq[Path]]] = {
+  val episodeFutures = episodes
+                          .take(count)
+                          .map(episode => downloadEpisode(podcastId, episode, mediaDir))
+  Future.sequence(episodeFutures).map(fs => sequence(fs))
+}
+
+// Checks the podcast feed and returns episodes
+def downloadPodcastFeed(podcastUrl: String): Future[Either[String, Seq[Episode]]] = {
   val request = basicRequest.get(uri"$podcastUrl")
     .response(asString("utf-8"))
-  val backend = DefaultSyncBackend()
-  val response = request.send(backend)
-  // response.body: by default read into an Either[String, String] to indicate failure or success 
-  response.body match {
-    case Right(xmlString) => {
-      for episode <- extractFeed(xmlString).take(1)
-      do downloadEpisode(podcastId, episode, mediaDir)
-    }
-    case Left(error) => println(s"Error downloading file: $error")
-  }
+  val backend = HttpClientFutureBackend()
+  request.send(backend).map(response => response.body.map(xmlString => extractFeed(xmlString)))
 }
 
-@main def hello(): Unit = {
+// Checks the podcast feed, and downloads the episodes
+def downloadPodcast(podcastId: String, podcastUrl: String, mediaDir: Path): Future[Either[String, Seq[Path]]] = {
+  downloadPodcastFeed(podcastUrl)
+    .flatMap(feed => {
+      // downloadResult is of type Either[String, Future[Either[String, Seq[Path]]]]
+      // We need to return the type Future[Either[String, Seq[Path]]]
+      val downloadResult = feed.map(episodes => downloadEpisodes(podcastId, episodes, mediaDir, 3))
+      downloadResult match {
+        case Left(s) => Future { Left(s) }
+        case Right(r) => r
+      }
+    })
+}
+
+
+@main def podcaster(): Unit = {
   parseConfig() match {
     case Failure(e) => println(s"Failed to parse config $e")
     case Success(config) => {
       if !Files.exists(config.mediaDir) then
         Files.createDirectory(config.mediaDir)
-      for (podcastId, podcastUrl) <- config.podcastEntries
-      do downloadPodcast(podcastId, podcastUrl, config.mediaDir)
+      // podcastFutures is of type Seq[Future[Either[String, Seq[Path]]]]
+      val podcastsFutures = config.podcastEntries
+        .map((podcastId, podcastUrl) => downloadPodcast(podcastId, podcastUrl, config.mediaDir)
+            .map(podcastResult => podcastResult match {
+              case Left(e) => println(s"$podcastId: Got an error $e while downloading podcasts")
+              case Right(ps) => println(s"$podcastId: Check the files ${ps.map(_.getFileName).mkString(", ")}")
+          }))
+      // resultFuture is of type Future[Seq[Either[String, Seq[Path]]]]
+      val resultFuture = Future.sequence(podcastsFutures)
+      Await.result(resultFuture, Duration.Inf)
     }
   }
 }
