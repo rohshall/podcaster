@@ -15,7 +15,9 @@ lazy val root = project
       "org.scalameta" %% "munit" % "1.0.0" % Test,
       "com.softwaremill.sttp.client4" %% "core" % "4.0.0-M17",
       "org.scala-lang.modules" %% "scala-xml" % "2.2.0",
-      "org.tomlj" % "tomlj" % "1.1.1"
+      "org.tomlj" % "tomlj" % "1.1.1",
+      "com.typesafe.scala-logging" %% "scala-logging" % "3.9.5",
+      "ch.qos.logback" % "logback-classic" % "1.3.5"
       )
     )
 
