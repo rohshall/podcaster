@@ -7,12 +7,10 @@ A podcast downloader written in Scala 3
 
 ### Coming soon
 
-1. Create a shell script to run the program
-2. Support command switches
-3. Show listing - local and remote episodes
-4. Download episodes using chapter numbers
-5. Cleanup episodes.
-6. Play the episode
+1. Create separate directory for each podcast
+2. Remember downloaded podcasts in a file in the data directory
+3. Support command switches - sync, check, download (selected podcasts)
+4. Create a shell script to run the program
 
 ## Usage
 ```
