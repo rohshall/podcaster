@@ -52,7 +52,7 @@ def extractFeed(xmlString: String): Seq[Episode] = {
 }
 
 // Download the podcast episode
-def downloadEpisode(podcastId: String, episode: Episode, mediaDir: Path): Future[Either[String, Path]] = {
+def downloadEpisode(podcastId: String, episode: Episode, podcastDirPath: Path): Future[Either[String, Path]] = {
   val uri = new URI(episode.url)
   // Remove the query params and the fragment from the URI
   var downloadUri = new URI(
@@ -64,8 +64,8 @@ def downloadEpisode(podcastId: String, episode: Episode, mediaDir: Path): Future
     null, // query
     null) // fragment
 
-  var downloadFileName = uri.getPath.replaceAll("/", "_")
-  var downloadPath = mediaDir.resolve(downloadFileName)
+  var downloadFileName = Paths.get(uri.getPath).getFileName
+  var downloadPath = podcastDirPath.resolve(downloadFileName)
   if !Files.exists(downloadPath) then
     logger.debug(s"$podcastId: downloading episode ${episode.title} published at ${episode.pubDate} from $downloadUri")
     var request = basicRequest.get(uri"$downloadUri")
@@ -76,11 +76,9 @@ def downloadEpisode(podcastId: String, episode: Episode, mediaDir: Path): Future
         logger.debug(s"$podcastId: redirecting to ${redirectUrl.get}")
         redirectUrl.map(url => {
           downloadUri = new URI(redirectUrl.get)
-          // Generate a unique file name for the download
-          // TODO: come up with a better way to generate the download file name
-          downloadFileName = downloadUri.getPath.replaceAll("/", "_")
-          downloadPath = mediaDir.resolve(downloadFileName)
-          request = basicRequest.get(uri"$downloadUri")
+          downloadFileName = Paths.get(downloadUri.getPath).getFileName
+          downloadPath = podcastDirPath.resolve(downloadFileName)
+          request = basicRequest.get(uri"${downloadUri}")
                                 .response(asPath(downloadPath))
           request.send(backend).map(_.body)
         }).getOrElse(Future { Left("No redirect location found") })
@@ -98,10 +96,10 @@ def sequence[A, B](s: Seq[Either[A, B]]): Either[A, Seq[B]] =
   }
 
 // Downloads <count> episodes of the podcast
-def downloadEpisodes(podcastId: String, episodes: Seq[Episode], mediaDir: Path, count: Int = 1): Future[Either[String, Seq[Path]]] = {
+def downloadEpisodes(podcastId: String, episodes: Seq[Episode], podcastDirPath: Path, count: Int = 1): Future[Either[String, Seq[Path]]] = {
   val episodeFutures = episodes
                           .take(count)
-                          .map(episode => downloadEpisode(podcastId, episode, mediaDir))
+                          .map(episode => downloadEpisode(podcastId, episode, podcastDirPath))
   Future.sequence(episodeFutures).map(fs => sequence(fs))
 }
 
@@ -116,9 +114,12 @@ def downloadPodcastFeed(podcastUrl: String): Future[Either[String, Seq[Episode]]
 def downloadPodcast(podcastId: String, podcastUrl: String, mediaDir: Path): Future[Either[String, Seq[Path]]] = {
   downloadPodcastFeed(podcastUrl)
     .flatMap(feed => {
+      val podcastDirPath = mediaDir.resolve(podcastId)
+      if !Files.exists(podcastDirPath) then
+        Files.createDirectory(podcastDirPath)
       // downloadResult is of type Either[String, Future[Either[String, Seq[Path]]]]
       // We need to return the type Future[Either[String, Seq[Path]]]
-      val downloadResult = feed.map(episodes => downloadEpisodes(podcastId, episodes, mediaDir, 3))
+      val downloadResult = feed.map(episodes => downloadEpisodes(podcastId, episodes, podcastDirPath, 3))
       downloadResult match {
         case Left(s) => Future { Left(s) }
         case Right(r) => r
