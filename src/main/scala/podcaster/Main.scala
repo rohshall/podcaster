@@ -1,25 +1,28 @@
-import util.{Try, Success, Failure}
-import scala.concurrent.ExecutionContext.Implicits.global
-import scala.concurrent.{Future, Await}
-import scala.concurrent.duration.Duration
-import scala.jdk.CollectionConverters.*
-import scala.xml._
-import sttp.client4._
-import sttp.client4.httpclient.HttpClientFutureBackend
-import sttp.model._
-import java.net.URI
-import java.net.http._
-import java.nio.file._
-import org.tomlj._
+package podcaster
+
 import com.typesafe.scalalogging.Logger
+import org.tomlj.*
+import sttp.client4.*
+import sttp.client4.httpclient.HttpClientFutureBackend
+import sttp.model.*
+
+import java.net.URI
+import java.net.http.*
+import java.nio.file.*
+import scala.concurrent.ExecutionContext.Implicits.global
+import scala.concurrent.duration.Duration
+import scala.concurrent.{Await, Future}
+import scala.jdk.CollectionConverters.*
+import scala.util.{Failure, Success, Try}
+import scala.xml.*
 
 case class Config(mediaDir: Path, podcastEntries: Seq[(String, String)])
 
 case class Episode(title: String, url: String, pubDate: String)
 
 val client: HttpClient = HttpClient.newBuilder().followRedirects(HttpClient.Redirect.NORMAL).build()  
-val backend = HttpClientFutureBackend.usingClient(client)
-val logger = Logger("podcaster")
+val backend: WebSocketBackend[Future] = HttpClientFutureBackend.usingClient(client)
+val logger: Logger = Logger("podcaster")
 
 // Parse TOML config
 def parseConfig(): Try[Config] = {
@@ -38,7 +41,7 @@ def parseConfig(): Try[Config] = {
 def extractFeed(xmlString: String): Seq[Episode] = {
   // convert the `String` to a `scala.xml.Elem`
   val xml = XML.loadString(xmlString)
-  val rssItems = (xml \ "channel" \ "item")
+  val rssItems = xml \ "channel" \ "item"
   val episodes = for {
     i <- rssItems
     title = (i \ "title").text
@@ -51,16 +54,17 @@ def extractFeed(xmlString: String): Seq[Episode] = {
 // Download the podcast episode
 def downloadEpisode(podcastId: String, episode: Episode, mediaDir: Path): Future[Either[String, Path]] = {
   val uri = new URI(episode.url)
+  // Remove the query params and the fragment from the URI
   var downloadUri = new URI(
-    uri.getScheme(), // scheme
+    uri.getScheme, // scheme
     null, // user info
-    uri.getHost(),
-    uri.getPort(),
-    uri.getPath(),
+    uri.getHost,
+    uri.getPort,
+    uri.getPath,
     null, // query
     null) // fragment
 
-  var downloadFileName = uri.getPath.replaceAll("/", "_");
+  var downloadFileName = uri.getPath.replaceAll("/", "_")
   var downloadPath = mediaDir.resolve(downloadFileName)
   if !Files.exists(downloadPath) then
     logger.debug(s"$podcastId: downloading episode ${episode.title} published at ${episode.pubDate} from $downloadUri")
@@ -72,9 +76,11 @@ def downloadEpisode(podcastId: String, episode: Episode, mediaDir: Path): Future
         logger.debug(s"$podcastId: redirecting to ${redirectUrl.get}")
         redirectUrl.map(url => {
           downloadUri = new URI(redirectUrl.get)
+          // Generate a unique file name for the download
+          // TODO: come up with a better way to generate the download file name
           downloadFileName = downloadUri.getPath.replaceAll("/", "_")
           downloadPath = mediaDir.resolve(downloadFileName)
-          request = basicRequest.get(uri"${downloadUri}")
+          request = basicRequest.get(uri"$downloadUri")
                                 .response(asPath(downloadPath))
           request.send(backend).map(_.body)
         }).getOrElse(Future { Left("No redirect location found") })
@@ -88,7 +94,7 @@ def downloadEpisode(podcastId: String, episode: Episode, mediaDir: Path): Future
 
 def sequence[A, B](s: Seq[Either[A, B]]): Either[A, Seq[B]] =
   s.foldRight(Right(Nil): Either[A, List[B]]) {
-    (e, acc) => for (xs <- acc.right; x <- e.right) yield x :: xs
+    (e, acc) => for (xs <- acc; x <- e) yield x :: xs
   }
 
 // Downloads <count> episodes of the podcast
@@ -124,19 +130,18 @@ def downloadPodcast(podcastId: String, podcastUrl: String, mediaDir: Path): Futu
 @main def podcaster(): Unit = {
   parseConfig() match {
     case Failure(e) => logger.debug(s"Failed to parse config $e")
-    case Success(config) => {
+    case Success(config) =>
       if !Files.exists(config.mediaDir) then
         Files.createDirectory(config.mediaDir)
       // podcastFutures is of type Seq[Future[Either[String, Seq[Path]]]]
       val podcastsFutures = config.podcastEntries
         .map((podcastId, podcastUrl) => downloadPodcast(podcastId, podcastUrl, config.mediaDir)
-            .map(podcastResult => podcastResult match {
-              case Left(e) => logger.info(s"$podcastId: Got an error $e while downloading podcasts")
-              case Right(ps) => logger.info(s"$podcastId: Check the files ${ps.map(_.getFileName).mkString(", ")}")
-          }))
+          .map {
+            case Left(e) => logger.info(s"$podcastId: Got an error $e while downloading podcasts")
+            case Right(ps) => logger.info(s"$podcastId: Check the files ${ps.map(_.getFileName).mkString(", ")}")
+          })
       // resultFuture is of type Future[Seq[Either[String, Seq[Path]]]]
       val resultFuture = Future.sequence(podcastsFutures)
       Await.result(resultFuture, Duration.Inf)
-    }
   }
 }
