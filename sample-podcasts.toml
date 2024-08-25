@@ -1,10 +1,6 @@
 [config]
-# Player command to play the files
-#
-# Examples:
-#   mpv %(file)s
-#   mpg123 %(file)s
-player = "mpv"
+# Count of episodes to download for each podcast
+count = 3
 
 # Media directory to store the files
 media_dir = "/home/salil/Music"

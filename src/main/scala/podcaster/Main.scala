@@ -16,7 +16,7 @@ import scala.jdk.CollectionConverters.*
 import scala.util.{Failure, Success, Try}
 import scala.xml.*
 
-case class Config(mediaDir: Path, podcastEntries: Seq[(String, String)])
+case class Config(countOfEpisodes: Int, mediaDir: Path, podcastEntries: Seq[(String, String)])
 
 case class Episode(title: String, url: String, pubDate: String)
 
@@ -31,10 +31,11 @@ def parseConfig(): Try[Config] = {
   if result.hasErrors then
     Failure(RuntimeException(result.errors.asScala.map(_.toString).mkString("\n")))
   else
+    val countOfEpisodes = result.getLong("config.count")
     val mediaDir = result.getString("config.media_dir")
     val podcastTable = result.getTable("podcasts")
     val podcastEntries = for podKey <- podcastTable.keySet.asScala yield (podKey, podcastTable.getString(podKey))
-    Success(Config(Paths.get(mediaDir), podcastEntries.toSeq))
+    Success(Config(countOfEpisodes.toInt, Paths.get(mediaDir), podcastEntries.toSeq))
 }
 
 // From the feed in XML, extract the podcast episodes info
@@ -65,7 +66,18 @@ def handle302Response(redirectUrl: Option[String], podcastId: String, podcastDir
         case Right(body) => body
         case Left(s) => throw new RuntimeException(s)
       }
-  }).getOrElse(Future { throw new RuntimeException("No redirect URL!") })
+  }).getOrElse(Future.failed(throw new RuntimeException("No redirect URL!")))
+}
+
+// Process episode download response
+def processDownloadResponse(response: Response[Either[String, Path]], podcastId: String, podcastDirPath: Path): Future[Path] = {
+  if response.code.isRedirect then
+    val redirectUrl = response.header(HeaderNames.Location)
+    handle302Response(redirectUrl, podcastId, podcastDirPath)
+  else
+    response.body match
+      case Right(body) => Future.successful(body.getFileName)
+      case Left(s) => Future.failed(throw new RuntimeException(s))
 }
 
 // Download the podcast episode
@@ -80,29 +92,28 @@ def downloadEpisode(podcastId: String, episode: Episode, podcastDirPath: Path): 
     var request = basicRequest
       .get(uri"$downloadUri")
       .response(asPath(downloadPath))
-    request.send(backend).flatMap {
-      response => if response.code.isRedirect then handle302Response(response.header(HeaderNames.Location), podcastId, podcastDirPath)
-                  else Future {
-                    response.body match {
-                      case Right(body) => body
-                      case Left(s) => throw new RuntimeException(s)
-                    }
-                  }
-    }
+    for
+      response <- request.send(backend)
+      file <- processDownloadResponse(response, podcastId, podcastDirPath)
+    yield file
   else
     logger.debug(s"$podcastId: episode ${episode.title} already downloaded, skipping..")
-    Future { downloadPath }
+    Future.successful(downloadFileName)
 }
 
 // Downloads <count> episodes of the podcast
-def downloadEpisodes(podcastId: String, episodes: Seq[Episode], podcastDirPath: Path, count: Int = 1): Future[Seq[Path]] = {
-  Future.traverse(episodes.take(count)) {
-    episode => downloadEpisode(podcastId, episode, podcastDirPath).recover {
-      case e: Exception => {
-        logger.error(s"$podcastId: episode ${episode.title} could not be downloaded due to ${e.getMessage}")
-        null
+def downloadEpisodes(podcastId: String, episodes: Seq[Episode], podcastDirPath: Path, countOfEpisodes: Int): Future[Seq[Path]] = {
+  // Start the episode download.
+  // For each failed episode download, print the error, and move on.
+  episodes.take(countOfEpisodes).foldLeft(Future.successful[Seq[Path]](Nil)) {
+    (acc, episode) => 
+      val episodeFuture = downloadEpisode(podcastId, episode, podcastDirPath).recover {
+        case e: Exception => {
+          println(s"$podcastId: episode ${episode.title} could not be downloaded due to ${e.getMessage}")
+          null
+        }
       }
-    }
+      acc.flatMap(paths => episodeFuture.map(path => if path != null then (path +: paths) else paths))
   }
 }
 
@@ -111,35 +122,44 @@ def downloadPodcastFeed(podcastUrl: String): Future[Seq[Episode]] = {
   val request = basicRequest
     .get(uri"$podcastUrl")
     .response(asString("utf-8"))
-  request.send(backend).map(response => response.body match {
+  for response <- request.send(backend)
+  yield response.body match {
     case Right(xmlString) => extractFeed(xmlString)
     case Left(s) => throw new RuntimeException(s)
-  })
+  }
 }
 
 // Checks the podcast feed, and downloads the episodes
-def downloadPodcast(podcastId: String, podcastUrl: String, mediaDir: Path): Future[Seq[Path]] = {
+def downloadPodcast(podcastId: String, podcastUrl: String, mediaDir: Path, countOfEpisodes: Int): Future[Unit] = {
   val podcastDirPath = mediaDir.resolve(podcastId)
   if !Files.exists(podcastDirPath) then Files.createDirectory(podcastDirPath)
-  downloadPodcastFeed(podcastUrl) flatMap {
-    episodes => downloadEpisodes(podcastId, episodes, podcastDirPath, 3)
-      .filter(p => p != null)
-  }
+  downloadPodcastFeed(podcastUrl)
+    .flatMap(episodes => downloadEpisodes(podcastId, episodes, podcastDirPath, countOfEpisodes))
+    .recover {
+      case e: Exception => {
+        println(s"$podcastId: Got an error ${e.getMessage} while downloading podcasts")
+        Nil
+      }
+    }
+    .map { 
+      paths => if !paths.isEmpty then
+                 println(s"$podcastId: Check the files ${paths.mkString(", ")}")
+               else
+                 println(s"$podcastId: No files downloaded")
+    }
 }
 
 
 @main def podcaster(): Unit = parseConfig() match {
   case Failure(e) => logger.debug(s"Failed to parse config $e")
   case Success(config) =>
+    // Create the directory for that podcast under `mediaDirectory`
     if !Files.exists(config.mediaDir) then Files.createDirectory(config.mediaDir)
-    val resultFuture = Future.traverse(config.podcastEntries) {
-      (podcastId, podcastUrl) => downloadPodcast(podcastId, podcastUrl, config.mediaDir)
-        .map { paths => logger.info(s"$podcastId: Check the files ${paths.map(_.getFileName).mkString(", ")}") }
-        .recover { case e: Exception => {
-            logger.error(s"$podcastId: Got an error ${e.getMessage} while downloading podcasts")
-            ""
-          }
-        }
+    // Download all podcasts as per the config.
+    val podcastsFuture = config.podcastEntries.map {
+      (podcastId, podcastUrl) => downloadPodcast(podcastId, podcastUrl, config.mediaDir, config.countOfEpisodes)
     }
+    val resultFuture = Future.sequence(podcastsFuture)
+    // Wait for all downloads to finish.
     Await.result(resultFuture, Duration.Inf)
 }

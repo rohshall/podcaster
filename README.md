@@ -7,10 +7,9 @@ A podcast downloader written in Scala 3
 
 ### Coming soon
 
-1. Create separate directory for each podcast
-2. Remember downloaded podcasts in a file in the data directory
-3. Support command switches - sync, check, download (selected podcasts)
-4. Create a shell script to run the program
+1. Remember downloaded podcasts in a file in the data directory
+2. Support command switches - sync, check, download (selected podcasts)
+3. Create a shell script to run the program
 
 ## Usage
 ```
