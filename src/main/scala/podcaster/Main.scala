@@ -107,13 +107,15 @@ def downloadEpisodes(podcastId: String, episodes: Seq[Episode], podcastDirPath: 
   // For each failed episode download, print the error, and move on.
   episodes.take(countOfEpisodes).foldLeft(Future.successful[Seq[Path]](Nil)) {
     (acc, episode) => 
-      val episodeFuture = downloadEpisode(podcastId, episode, podcastDirPath).recover {
-        case e: Exception => {
-          println(s"$podcastId: episode ${episode.title} could not be downloaded due to ${e.getMessage}")
-          null
-        }
+      acc.flatMap { paths =>
+        downloadEpisode(podcastId, episode, podcastDirPath)
+          .map { path => path +: paths }
+          .recover {
+            case e: Exception =>
+              println(s"$podcastId: episode ${episode.title} could not be downloaded due to ${e.getMessage}")
+              paths
+          }
       }
-      acc.flatMap(paths => episodeFuture.map(path => if path != null then (path +: paths) else paths))
   }
 }
 
@@ -136,16 +138,15 @@ def downloadPodcast(podcastId: String, podcastUrl: String, mediaDir: Path, count
   downloadPodcastFeed(podcastUrl)
     .flatMap(episodes => downloadEpisodes(podcastId, episodes, podcastDirPath, countOfEpisodes))
     .recover {
-      case e: Exception => {
+      case e: Exception =>
         println(s"$podcastId: Got an error ${e.getMessage} while downloading podcasts")
         Nil
-      }
     }
-    .map { 
-      paths => if !paths.isEmpty then
-                 println(s"$podcastId: Check the files ${paths.mkString(", ")}")
-               else
-                 println(s"$podcastId: No files downloaded")
+    .map { paths =>
+      if !paths.isEmpty then
+       println(s"$podcastId: Check the files ${paths.mkString(", ")}")
+      else
+       println(s"$podcastId: No files downloaded")
     }
 }
 
