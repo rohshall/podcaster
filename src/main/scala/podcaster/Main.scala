@@ -59,7 +59,7 @@ def handle302Response(redirectUrl: Option[String], podcastId: String, podcastDir
     val downloadFileName = Paths.get(downloadUri.getPath).getFileName
     val downloadPath = podcastDirPath.resolve(downloadFileName)
     val request = basicRequest
-      .get(uri"${downloadUri}")
+      .get(uri"$downloadUri")
       .response(asPath(downloadPath))
     for response <- request.send(backend)
       yield response.body match {
@@ -89,7 +89,7 @@ def downloadEpisode(podcastId: String, episode: Episode, podcastDirPath: Path): 
   val downloadPath = podcastDirPath.resolve(downloadFileName)
   if !Files.exists(downloadPath) then
     logger.debug(s"$podcastId: downloading episode ${episode.title} published at ${episode.pubDate} from $downloadUri")
-    var request = basicRequest
+    val request = basicRequest
       .get(uri"$downloadUri")
       .response(asPath(downloadPath))
     for
@@ -143,7 +143,7 @@ def downloadPodcast(podcastId: String, podcastUrl: String, mediaDir: Path, count
         Nil
     }
     .map { paths =>
-      if !paths.isEmpty then
+      if paths.nonEmpty then
        println(s"$podcastId: Check the files ${paths.mkString(", ")}")
       else
        println(s"$podcastId: No files downloaded")
