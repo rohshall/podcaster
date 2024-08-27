@@ -1,7 +1,4 @@
 [config]
-# Count of episodes to download for each podcast
-count = 3
-
 # Media directory to store the files
 media_dir = "/home/salil/Music"
 

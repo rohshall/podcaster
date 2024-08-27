@@ -17,7 +17,7 @@ import scala.jdk.CollectionConverters.*
 import scala.util.{Failure, Success, Try}
 import scala.xml.*
 
-case class Config(countOfEpisodes: Int, mediaDir: Path, podcastEntries: Seq[(String, String)])
+case class Config(mediaDir: Path, podcastEntries: Seq[(String, String)])
 
 case class Episode(title: String, url: String, pubDate: String)
 
@@ -32,11 +32,10 @@ def parseConfig(): Try[Config] = {
   if result.hasErrors then
     Failure(RuntimeException(result.errors.asScala.map(_.toString).mkString("\n")))
   else
-    val countOfEpisodes = result.getLong("config.count")
     val mediaDir = result.getString("config.media_dir")
     val podcastTable = result.getTable("podcasts")
     val podcastEntries = for podKey <- podcastTable.keySet.asScala yield (podKey, podcastTable.getString(podKey))
-    Success(Config(countOfEpisodes.toInt, Paths.get(mediaDir), podcastEntries.toSeq))
+    Success(Config(Paths.get(mediaDir), podcastEntries.toSeq))
 }
 
 // From the feed in XML, extract the podcast episodes info
@@ -155,31 +154,33 @@ def downloadPodcast(podcastId: String, podcastUrl: String, mediaDir: Path, count
 // List the podcast feed
 def listPodcast(podcastId: String, podcastUrl: String, countOfEpisodes: Int): Future[String] = {
   downloadPodcastFeed(podcastUrl)
-    .map(episodes => s"${podcastId} -->\n" + episodes.take(countOfEpisodes).map(e => s"${e.title} (published on ${e.pubDate})").mkString("\n"))
+    .map(episodes => s"${podcastId} -->\n" + episodes.take(countOfEpisodes).zipWithIndex.map((e, i) => s"${i+1}. ${e.title} (published at ${e.pubDate})").mkString("\n"))
 }
 
-class Conf(arguments: Seq[String]) extends ScallopConf(arguments) {
+class CmdOpt(arguments: Seq[String]) extends ScallopConf(arguments) {
   version("podcaster 0.1 (c) 2024 rohshall")
   banner("""Usage: podcaster [podcastId] [count] [action]
            |podcaster is a podcast downloader.
            |Options:
            |""".stripMargin)
   footer("\nFor all other tricks, consult the documentation!")
-  val podcastId = opt[String](descr = "podcastId from the config file")
-  val count = opt[Int](descr = "count of latest episodes to download or list")
+  val podcastId = opt[String](required = false, descr = "podcastId from the config file")
+  val count = opt[Int](default = Some(3), descr = "count of latest episodes to download or list")
   val action = trailArg[String](required = true, descr = "action on the podcast: list or download")
   verify()
 }
 
 @main def podcaster(args: String*): Unit = {
-  val conf = new Conf(args) 
+  val cmdOpt = new CmdOpt(args) 
   parseConfig() match {
     case Failure(e) => println(s"Failed to parse config $e")
     case Success(config) =>
-      conf.action() match {
+      val podcastIdOpt: Option[String] = cmdOpt.podcastId.get
+      val podcastMatcher = (entry: (String, String)) => podcastIdOpt.map(_.equals(entry._1)).getOrElse(true)
+      cmdOpt.action() match {
         case "list" => 
-          val podcastsFuture = config.podcastEntries.map {
-            (podcastId, podcastUrl) => listPodcast(podcastId, podcastUrl, config.countOfEpisodes).map(println(_))
+          val podcastsFuture = config.podcastEntries.filter(podcastMatcher).map {
+            (podcastId, podcastUrl) => listPodcast(podcastId, podcastUrl, cmdOpt.count()).map(println(_))
           }
           val resultFuture = Future.sequence(podcastsFuture)
           Await.result(resultFuture, Duration.Inf)
@@ -187,8 +188,8 @@ class Conf(arguments: Seq[String]) extends ScallopConf(arguments) {
           // Create the directory for that podcast under `mediaDirectory`
           if !Files.exists(config.mediaDir) then Files.createDirectory(config.mediaDir)
           // Download all podcasts as per the config.
-          val podcastsFuture = config.podcastEntries.map {
-            (podcastId, podcastUrl) => downloadPodcast(podcastId, podcastUrl, config.mediaDir, config.countOfEpisodes)
+          val podcastsFuture = config.podcastEntries.filter(podcastMatcher).map {
+            (podcastId, podcastUrl) => downloadPodcast(podcastId, podcastUrl, config.mediaDir, cmdOpt.count())
           }
           val resultFuture = Future.sequence(podcastsFuture)
           // Wait for all downloads to finish.
