@@ -8,13 +8,12 @@ A podcast downloader written in Scala 3
 ### Coming soon
 
 1. Remember downloaded podcasts in a file in the data directory so that we don't re-download even if the file was deleted.
-2. Support checking and downloading selected podcasts.
-3. Create a shell script to run the program.
-4. Support Scala native.
+2. Create a shell script to run the program.
+3. Support Scala native.
 
 ## Usage
 ```
-sbt run
+sbt run [list|download]
 ```
 
 

@@ -154,7 +154,7 @@ def downloadPodcast(podcastId: String, podcastUrl: String, mediaDir: Path, count
 // List the podcast feed
 def listPodcast(podcastId: String, podcastUrl: String, countOfEpisodes: Int): Future[String] = {
   downloadPodcastFeed(podcastUrl)
-    .map(episodes => s"${podcastId} -->\n" + episodes.take(countOfEpisodes).zipWithIndex.map((e, i) => s"${i+1}. ${e.title} (published at ${e.pubDate})").mkString("\n"))
+    .map(episodes => s"$podcastId -->\n" + episodes.take(countOfEpisodes).zipWithIndex.map((e, i) => s"${i+1}. ${e.title} (published at ${e.pubDate})").mkString("\n"))
 }
 
 class CmdOpt(arguments: Seq[String]) extends ScallopConf(arguments) {
@@ -164,9 +164,9 @@ class CmdOpt(arguments: Seq[String]) extends ScallopConf(arguments) {
            |Options:
            |""".stripMargin)
   footer("\nFor all other tricks, consult the documentation!")
-  val podcastId = opt[String](required = false, descr = "podcastId from the config file")
-  val count = opt[Int](default = Some(3), descr = "count of latest episodes to download or list")
-  val action = trailArg[String](required = true, descr = "action on the podcast: list or download")
+  val podcastId: ScallopOption[String] = opt[String](required = false, descr = "podcastId from the config file")
+  val count: ScallopOption[Int] = opt[Int](default = Some(3), descr = "count of latest episodes to download or list")
+  val action: ScallopOption[String] = trailArg[String](required = true, descr = "action on the podcast: list or download")
   verify()
 }
 
@@ -175,8 +175,8 @@ class CmdOpt(arguments: Seq[String]) extends ScallopConf(arguments) {
   parseConfig() match {
     case Failure(e) => println(s"Failed to parse config $e")
     case Success(config) =>
-      val podcastIdOpt: Option[String] = cmdOpt.podcastId.get
-      val podcastMatcher = (entry: (String, String)) => podcastIdOpt.map(_.equals(entry._1)).getOrElse(true)
+      val podcastIdOpt: Option[String] = cmdOpt.podcastId.toOption
+      val podcastMatcher = (entry: (String, String)) => podcastIdOpt.forall(_.equals(entry._1))
       cmdOpt.action() match {
         case "list" => 
           val podcastsFuture = config.podcastEntries.filter(podcastMatcher).map {
