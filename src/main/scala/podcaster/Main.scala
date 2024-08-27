@@ -5,6 +5,7 @@ import org.tomlj.*
 import sttp.client4.*
 import sttp.client4.httpclient.HttpClientFutureBackend
 import sttp.model.*
+import org.rogach.scallop._
 
 import java.net.URI
 import java.net.http.*
@@ -151,16 +152,48 @@ def downloadPodcast(podcastId: String, podcastUrl: String, mediaDir: Path, count
 }
 
 
-@main def podcaster(): Unit = parseConfig() match {
-  case Failure(e) => logger.debug(s"Failed to parse config $e")
-  case Success(config) =>
-    // Create the directory for that podcast under `mediaDirectory`
-    if !Files.exists(config.mediaDir) then Files.createDirectory(config.mediaDir)
-    // Download all podcasts as per the config.
-    val podcastsFuture = config.podcastEntries.map {
-      (podcastId, podcastUrl) => downloadPodcast(podcastId, podcastUrl, config.mediaDir, config.countOfEpisodes)
-    }
-    val resultFuture = Future.sequence(podcastsFuture)
-    // Wait for all downloads to finish.
-    Await.result(resultFuture, Duration.Inf)
+// List the podcast feed
+def listPodcast(podcastId: String, podcastUrl: String, countOfEpisodes: Int): Future[String] = {
+  downloadPodcastFeed(podcastUrl)
+    .map(episodes => s"${podcastId} -->\n" + episodes.take(countOfEpisodes).map(e => s"${e.title} (published on ${e.pubDate})").mkString("\n"))
+}
+
+class Conf(arguments: Seq[String]) extends ScallopConf(arguments) {
+  version("podcaster 0.1 (c) 2024 rohshall")
+  banner("""Usage: podcaster [podcastId] [count] [action]
+           |podcaster is a podcast downloader.
+           |Options:
+           |""".stripMargin)
+  footer("\nFor all other tricks, consult the documentation!")
+  val podcastId = opt[String](descr = "podcastId from the config file")
+  val count = opt[Int](descr = "count of latest episodes to download or list")
+  val action = trailArg[String](required = true, descr = "action on the podcast: list or download")
+  verify()
+}
+
+@main def podcaster(args: String*): Unit = {
+  val conf = new Conf(args) 
+  parseConfig() match {
+    case Failure(e) => println(s"Failed to parse config $e")
+    case Success(config) =>
+      conf.action() match {
+        case "list" => 
+          val podcastsFuture = config.podcastEntries.map {
+            (podcastId, podcastUrl) => listPodcast(podcastId, podcastUrl, config.countOfEpisodes).map(println(_))
+          }
+          val resultFuture = Future.sequence(podcastsFuture)
+          Await.result(resultFuture, Duration.Inf)
+        case "download" => 
+          // Create the directory for that podcast under `mediaDirectory`
+          if !Files.exists(config.mediaDir) then Files.createDirectory(config.mediaDir)
+          // Download all podcasts as per the config.
+          val podcastsFuture = config.podcastEntries.map {
+            (podcastId, podcastUrl) => downloadPodcast(podcastId, podcastUrl, config.mediaDir, config.countOfEpisodes)
+          }
+          val resultFuture = Future.sequence(podcastsFuture)
+          // Wait for all downloads to finish.
+          Await.result(resultFuture, Duration.Inf)
+        case _ => println("unknown action!")
+      }
+  }
 }

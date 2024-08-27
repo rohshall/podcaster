@@ -17,14 +17,15 @@ lazy val root = project
       "org.scala-lang.modules" %% "scala-xml" % "2.2.0",
       "org.tomlj" % "tomlj" % "1.1.1",
       "com.typesafe.scala-logging" %% "scala-logging" % "3.9.5",
-      "ch.qos.logback" % "logback-classic" % "1.3.5"
-      )
+      "ch.qos.logback" % "logback-classic" % "1.3.5",
+      "org.rogach" %% "scallop" % "5.1.0" 
     )
+)
 
-  inThisBuild(
-      List(
-        scalaVersion := scala3Version,
-        semanticdbEnabled := true,
-        semanticdbVersion := scalafixSemanticdb.revision
-        )
-      )
+inThisBuild(
+  List(
+    scalaVersion := scala3Version,
+    semanticdbEnabled := true,
+    semanticdbVersion := scalafixSemanticdb.revision
+  )
+)
