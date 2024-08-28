@@ -13,7 +13,7 @@ A podcast downloader written in Scala 3
 
 ## Usage
 ```
-sbt run [list|download]
+mill run [show|download]
 ```
 
 
