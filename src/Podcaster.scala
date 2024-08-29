@@ -198,5 +198,5 @@ object Podcaster {
     Await.result(resultFuture, Duration.Inf)
   }
 
-  def main(args: Array[String]): Unit = ParserForMethods(this).runOrExit(args)
+  def main(args: Array[String]): Unit = ParserForMethods(this).runOrExit(args.toIndexedSeq)
 }

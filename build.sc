@@ -4,6 +4,11 @@ import mill._, scalalib._
 
 object podcaster extends RootModule with ScalaModule {
   def scalaVersion = "3.5.0"
+  // compile flags
+  def scalacOptions = Seq(
+    "-feature",
+    "-deprecation"
+  )
   def ivyDeps = Agg(
     ivy"com.lihaoyi::mainargs:0.7.2",
     ivy"com.softwaremill.sttp.client4::core:4.0.0-M17",
