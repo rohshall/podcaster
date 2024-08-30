@@ -2,7 +2,8 @@ package podcaster
 
 import com.typesafe.scalalogging.Logger
 import mainargs.{ParserForMethods, arg, main}
-import org.tomlj.*
+import upickle._
+import upickle.default.{ReadWriter => RW, macroRW}
 import sttp.client4.*
 import sttp.client4.httpclient.HttpClientFutureBackend
 import sttp.model.*
@@ -21,7 +22,18 @@ import scala.xml.*
 object Podcaster {
 
   // Settings stored in "~/.podcasts.toml".
-  private case class Settings(mediaDir: Path, podcastEntries: Seq[(String, String)])
+  case class Podcast(name: String, url: String)
+  object Podcast{
+    implicit val rw: RW[Podcast] = macroRW
+  }
+  case class Config(mediaDir: String)
+  object Config{
+    implicit val rw: RW[Config] = macroRW
+  }
+  case class Settings(config: Config, podcasts: Array[Podcast])
+  object Settings{
+    implicit val rw: RW[Settings] = macroRW
+  }
 
   // Representation of a podcast episode for our purposes.
   private case class Episode(title: String, url: String, pubDate: String)
@@ -30,18 +42,11 @@ object Podcaster {
   private val backend: WebSocketBackend[Future] = HttpClientFutureBackend.usingClient(client)
   private val logger: Logger = Logger("podcaster")
 
-  // Parse TOML config from "~/.podcasts.toml".
+  // Parse TOML config from "~/.podcasts.totl".
   private def parseSettings(): Try[Settings] = {
-    val source = Paths.get(System.getProperty("user.home"), ".podcasts.toml")
+    val source = Paths.get(System.getProperty("user.home"), ".podcasts.json")
     println(s"Parsing the settings file $source")
-    val result = Toml.parse(source)
-    if result.hasErrors then
-      Failure(RuntimeException(result.errors.asScala.map(_.toString).mkString("\n")))
-    else
-      val mediaDir = result.getString("config.media_dir")
-      val podcastTable = result.getTable("podcasts")
-      val podcastEntries = for podKey <- podcastTable.keySet.asScala yield (podKey, podcastTable.getString(podKey))
-      Success(Settings(Paths.get(mediaDir), podcastEntries.toSeq))
+    Try(upickle.default.read[Settings](source))
   }
 
   // From the podcast feed in XML, extract the podcast episodes info
@@ -69,8 +74,8 @@ object Podcaster {
         .response(asPath(downloadPath))
         for response <- request.send(backend)
           yield response.body match
-            case Right(body) => body
-            case Left(s) => throw new RuntimeException(s)
+          case Right(body) => body
+          case Left(s) => throw new RuntimeException(s)
     }).getOrElse(Future.failed(throw new RuntimeException("No redirect URL!")))
   }
 
@@ -126,7 +131,7 @@ object Podcaster {
   private def downloadPodcastFeed(podcastUrl: String): Future[Seq[Episode]] = {
     val request = basicRequest.get(uri"$podcastUrl").response(asString("utf-8"))
     for response <- request.send(backend)
-    yield response.body match
+      yield response.body match
       case Right(xmlString) => extractFeed(xmlString)
       case Left(s) => throw new RuntimeException(s)
   }
@@ -162,7 +167,8 @@ object Podcaster {
   private def processPodcast(processPodcastEntry: (String, String, Path) => Future[Unit]): Future[Unit] = parseSettings() match {
     case Failure(e) => Future.failed(new RuntimeException(s"Failed to parse config $e"))
     case Success(settings) =>
-      val podcastsFuture = settings.podcastEntries.map(entry => processPodcastEntry(entry._1, entry._2, settings.mediaDir))
+      val mediaDir = Paths.get(settings.config.mediaDir)
+      val podcastsFuture = settings.podcasts.map(entry => processPodcastEntry(entry.name, entry.url, mediaDir))
       Future.sequence(podcastsFuture).map(_ => ())
   }
 
@@ -171,15 +177,14 @@ object Podcaster {
     podcastIdOpt: Option[String],
     @arg(short = 'c', doc = "count of latest podcast episodes to download")
     count: Int = 3): Unit = {
-    val processPodcastEntry: (String, String, Path) => Future[Unit] = (podcastId: String, podcastUrl: String, mediaDir: Path) => {
-      println(s"Downloading the podcast $podcastId")
-      if podcastIdOpt.forall(_.equals(podcastId)) then
-        downloadPodcast(podcastId, podcastUrl, mediaDir, count)
-      else
-        Future.unit
-    }
-    val resultFuture = processPodcast(processPodcastEntry)
-    Await.result(resultFuture, Duration.Inf)
+      val processPodcastEntry: (String, String, Path) => Future[Unit] = (podcastId: String, podcastUrl: String, mediaDir: Path) => {
+        if podcastIdOpt.forall(_.equals(podcastId)) then
+          downloadPodcast(podcastId, podcastUrl, mediaDir, count)
+        else
+          Future.unit
+      }
+      val resultFuture = processPodcast(processPodcastEntry)
+      Await.result(resultFuture, Duration.Inf)
   }
 
   @main
@@ -187,15 +192,14 @@ object Podcaster {
     podcastIdOpt: Option[String],
     @arg(short = 'c', doc = "count of latest podcast episodes to show")
     count: Int = 10): Unit = {
-    val processPodcastEntry: (String, String, Path) => Future[Unit] = (podcastId: String, podcastUrl: String, mediaDir: Path) => {
-      println(s"Downloading the podcast $podcastId")
-      if podcastIdOpt.forall(_.equals(podcastId)) then
-        showPodcast(podcastId, podcastUrl, count)
-      else
-        Future.unit
-    }
-    val resultFuture = processPodcast(processPodcastEntry)
-    Await.result(resultFuture, Duration.Inf)
+      val processPodcastEntry: (String, String, Path) => Future[Unit] = (podcastId: String, podcastUrl: String, mediaDir: Path) => {
+        if podcastIdOpt.forall(_.equals(podcastId)) then
+          showPodcast(podcastId, podcastUrl, count)
+        else
+          Future.unit
+      }
+      val resultFuture = processPodcast(processPodcastEntry)
+      Await.result(resultFuture, Duration.Inf)
   }
 
   def main(args: Array[String]): Unit = ParserForMethods(this).runOrExit(args.toIndexedSeq)

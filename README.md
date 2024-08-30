@@ -2,8 +2,8 @@
 A podcast downloader written in Scala 3
 
 ## Features
-1. Reads TOML file in the home directory `~/.podcasts.toml`  to get the config about which podcasts to download, and where to store the episodes. A sample TOML file `sample-podcasts.toml` is included.
-2. Downloads the latest episodes of the podcasts.
+1. Reads config file in the home directory `~/.podcasts.json`  to get the config about which podcasts to download, and where to store the episodes. A sample config file `sample-podcasts.json` is included.
+2. Downloads the latest configurable number of episodes of the podcasts.
 
 ### Coming soon
 
