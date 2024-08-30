@@ -4,15 +4,15 @@
     },
     "podcasts": [
         {
-            "name": "BegToDiffer",
+            "id": "BegToDiffer",
             "url": "https://audioboom.com/channels/5114288.rss"
         },
         {
-            "name": "WashingtonWeek",
+            "id": "WashingtonWeek",
             "url": "http://feeds.pbs.org/pbs/weta/washingtonweek-audio" 
         },
         {
-            "name": "UpFirst",
+            "id": "UpFirst",
             "url": "https://feeds.npr.org/510318/podcast.xml"
         }
     ]

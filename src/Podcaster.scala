@@ -22,7 +22,7 @@ import scala.xml.*
 object Podcaster {
 
   // Settings stored in "~/.podcasts.toml".
-  case class Podcast(name: String, url: String)
+  case class Podcast(id: String, url: String)
   object Podcast{
     implicit val rw: RW[Podcast] = macroRW
   }
@@ -138,30 +138,30 @@ object Podcaster {
 
   // Checks the podcast feed, and downloads the episodes
   private def downloadPodcast(podcast: Podcast, mediaDir: Path, countOfEpisodes: Int): Future[Unit] = {
-    println(s"Downloading latest $countOfEpisodes episodes of ${podcast.name}")
-    val podcastDirPath = mediaDir.resolve(podcast.name)
+    println(s"Downloading latest $countOfEpisodes episodes of ${podcast.id}")
+    val podcastDirPath = mediaDir.resolve(podcast.id)
     if !Files.exists(podcastDirPath) then Files.createDirectories(podcastDirPath)
     downloadPodcastFeed(podcast.url)
-      .flatMap(episodes => downloadEpisodes(podcast.name, episodes, podcastDirPath, countOfEpisodes))
+      .flatMap(episodes => downloadEpisodes(podcast.id, episodes, podcastDirPath, countOfEpisodes))
       .recover {
         case e: Exception =>
-          println(s"${podcast.name}: Got an error ${e.getMessage} while downloading podcasts")
+          println(s"${podcast.id}: Got an error ${e.getMessage} while downloading podcasts")
           Nil
       }
       .map { paths =>
         if paths.nonEmpty then
-          println(s"${podcast.name}: Check the files ${paths.mkString(", ")}")
+          println(s"${podcast.id}: Check the files ${paths.mkString(", ")}")
         else
-          println(s"${podcast.name}: No files downloaded")
+          println(s"${podcast.id}: No files downloaded")
       }
   }
 
 
   // List the podcast feed
   private def showPodcast(podcast: Podcast, countOfEpisodes: Int): Future[Unit] = {
-    println(s"Fetching latest $countOfEpisodes episodes of ${podcast.name}")
+    println(s"Showing latest $countOfEpisodes episodes of ${podcast.id}")
     downloadPodcastFeed(podcast.url)
-      .map(episodes => println(s"${podcast.name} -->\n" + episodes.take(countOfEpisodes).zipWithIndex.map((e, i) => s"${i+1}. ${e.title} (published at ${e.pubDate})").mkString("\n")))
+      .map(episodes => println(s"${podcast.id} -->\n" + episodes.take(countOfEpisodes).zipWithIndex.map((e, i) => s"${i+1}. ${e.title} (published at ${e.pubDate})").mkString("\n")))
   }
 
   // A utility method to process podcast config for both show and download actions.
@@ -170,7 +170,7 @@ object Podcaster {
     case Success(settings) =>
       val mediaDir = Paths.get(settings.config.mediaDir)
       Future.traverse(settings.podcasts) {
-        podcast => if podcastIdOpt.forall(_.equals(podcast.name)) then
+        podcast => if podcastIdOpt.forall(_.equals(podcast.id)) then
                     processPodcastEntry(podcast, mediaDir)
                    else
                     Future.unit
