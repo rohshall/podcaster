@@ -137,39 +137,44 @@ object Podcaster {
   }
 
   // Checks the podcast feed, and downloads the episodes
-  private def downloadPodcast(podcastId: String, podcastUrl: String, mediaDir: Path, countOfEpisodes: Int): Future[Unit] = {
-    println(s"Downloading $countOfEpisodes episodes of $podcastId")
-    val podcastDirPath = mediaDir.resolve(podcastId)
+  private def downloadPodcast(podcast: Podcast, mediaDir: Path, countOfEpisodes: Int): Future[Unit] = {
+    println(s"Downloading latest $countOfEpisodes episodes of ${podcast.name}")
+    val podcastDirPath = mediaDir.resolve(podcast.name)
     if !Files.exists(podcastDirPath) then Files.createDirectories(podcastDirPath)
-    downloadPodcastFeed(podcastUrl)
-      .flatMap(episodes => downloadEpisodes(podcastId, episodes, podcastDirPath, countOfEpisodes))
+    downloadPodcastFeed(podcast.url)
+      .flatMap(episodes => downloadEpisodes(podcast.name, episodes, podcastDirPath, countOfEpisodes))
       .recover {
         case e: Exception =>
-          println(s"$podcastId: Got an error ${e.getMessage} while downloading podcasts")
+          println(s"${podcast.name}: Got an error ${e.getMessage} while downloading podcasts")
           Nil
       }
       .map { paths =>
         if paths.nonEmpty then
-          println(s"$podcastId: Check the files ${paths.mkString(", ")}")
+          println(s"${podcast.name}: Check the files ${paths.mkString(", ")}")
         else
-          println(s"$podcastId: No files downloaded")
+          println(s"${podcast.name}: No files downloaded")
       }
   }
 
 
   // List the podcast feed
-  private def showPodcast(podcastId: String, podcastUrl: String, countOfEpisodes: Int): Future[Unit] = {
-    println(s"Fetching $countOfEpisodes episodes of $podcastId")
-    downloadPodcastFeed(podcastUrl)
-      .map(episodes => println(s"$podcastId -->\n" + episodes.take(countOfEpisodes).zipWithIndex.map((e, i) => s"${i+1}. ${e.title} (published at ${e.pubDate})").mkString("\n")))
+  private def showPodcast(podcast: Podcast, countOfEpisodes: Int): Future[Unit] = {
+    println(s"Fetching latest $countOfEpisodes episodes of ${podcast.name}")
+    downloadPodcastFeed(podcast.url)
+      .map(episodes => println(s"${podcast.name} -->\n" + episodes.take(countOfEpisodes).zipWithIndex.map((e, i) => s"${i+1}. ${e.title} (published at ${e.pubDate})").mkString("\n")))
   }
 
-  private def processPodcast(processPodcastEntry: (String, String, Path) => Future[Unit]): Future[Unit] = parseSettings() match {
+  // A utility method to process podcast config for both show and download actions.
+  private def processPodcast(podcastIdOpt: Option[String], processPodcastEntry: (Podcast, Path) => Future[Unit]): Future[Unit] = parseSettings() match {
     case Failure(e) => Future.failed(new RuntimeException(s"Failed to parse config $e"))
     case Success(settings) =>
       val mediaDir = Paths.get(settings.config.mediaDir)
-      val podcastsFuture = settings.podcasts.map(entry => processPodcastEntry(entry.name, entry.url, mediaDir))
-      Future.sequence(podcastsFuture).map(_ => ())
+      Future.traverse(settings.podcasts) {
+        podcast => if podcastIdOpt.forall(_.equals(podcast.name)) then
+                    processPodcastEntry(podcast, mediaDir)
+                   else
+                    Future.unit
+      }.map(_ => ())
   }
 
   @main
@@ -177,13 +182,8 @@ object Podcaster {
     podcastIdOpt: Option[String],
     @arg(short = 'c', doc = "count of latest podcast episodes to download")
     count: Int = 3): Unit = {
-      val processPodcastEntry: (String, String, Path) => Future[Unit] = (podcastId: String, podcastUrl: String, mediaDir: Path) => {
-        if podcastIdOpt.forall(_.equals(podcastId)) then
-          downloadPodcast(podcastId, podcastUrl, mediaDir, count)
-        else
-          Future.unit
-      }
-      val resultFuture = processPodcast(processPodcastEntry)
+      val processPodcastEntry = (podcast: Podcast, mediaDir: Path) => downloadPodcast(podcast, mediaDir, count)
+      val resultFuture = processPodcast(podcastIdOpt, processPodcastEntry)
       Await.result(resultFuture, Duration.Inf)
   }
 
@@ -192,13 +192,8 @@ object Podcaster {
     podcastIdOpt: Option[String],
     @arg(short = 'c', doc = "count of latest podcast episodes to show")
     count: Int = 10): Unit = {
-      val processPodcastEntry: (String, String, Path) => Future[Unit] = (podcastId: String, podcastUrl: String, mediaDir: Path) => {
-        if podcastIdOpt.forall(_.equals(podcastId)) then
-          showPodcast(podcastId, podcastUrl, count)
-        else
-          Future.unit
-      }
-      val resultFuture = processPodcast(processPodcastEntry)
+      val processPodcastEntry = (podcast: Podcast, mediaDir: Path) => showPodcast(podcast, count)
+      val resultFuture = processPodcast(podcastIdOpt, processPodcastEntry)
       Await.result(resultFuture, Duration.Inf)
   }
 
