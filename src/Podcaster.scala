@@ -60,7 +60,7 @@ object Podcaster {
   // Handle 302 redirect responses while getting responses. As per the standard, we need to explicitly decide to follow the redirect URL.
   private def handle302Response(redirectUrl: Option[String], podcastId: String, podcastDirPath: Path): Future[Path] = {
     redirectUrl.map(url => {
-      logger.debug(s"$podcastId: redirecting to $url")
+      logger.info(s"$podcastId: redirecting to $url")
       val downloadUri = new URI(url)
       val downloadFileName = Paths.get(downloadUri.getPath).getFileName
       val downloadPath = podcastDirPath.resolve(downloadFileName)
@@ -93,14 +93,14 @@ object Podcaster {
     val downloadFileName = Paths.get(downloadUri.getPath).getFileName
     val downloadPath = podcastDirPath.resolve(downloadFileName)
     if !Files.exists(downloadPath) then
-      logger.debug(s"$podcastId: downloading episode ${episode.title} published at ${episode.pubDate} from $downloadUri")
+      logger.info(s"$podcastId: downloading episode ${episode.title} published at ${episode.pubDate} from $downloadUri")
       val request = basicRequest.get(uri"$downloadUri").response(asPath(downloadPath))
       for
         response <- request.send(backend)
         file <- processDownloadResponse(response, podcastId, podcastDirPath)
       yield file
     else
-      logger.debug(s"$podcastId: episode ${episode.title} already downloaded, skipping..")
+      logger.info(s"$podcastId: episode ${episode.title} already downloaded, skipping..")
       Future.successful(downloadFileName)
   }
 
