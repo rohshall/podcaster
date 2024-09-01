@@ -11,10 +11,10 @@ object podcaster extends RootModule with ScalaModule {
   )
   def ivyDeps = Agg(
     ivy"com.lihaoyi::mainargs:0.7.2",
-    ivy"com.softwaremill.sttp.client4::core:4.0.0-M17",
+    ivy"com.lihaoyi::requests:0.9.0",
     ivy"org.scala-lang.modules::scala-xml:2.2.0",
     ivy"com.lihaoyi::upickle:4.0.1",
-    ivy"com.typesafe.scala-logging::scala-logging:3.9.5",
+    ivy"com.lihaoyi::os-lib:0.10.5",
     ivy"ch.qos.logback:logback-classic:1.3.5"
   )
 
