@@ -89,8 +89,8 @@ object Podcaster {
     os.makeDir.all(podcastDirPath)
     Future.traverse(episodes)(episode => downloadEpisode(podcastId, episode, podcastDirPath, episodesDownloaded))
       .map { _ => 
-        val eresult = episodes.map(_.title).mkString("\n")
-        Console.printf(s"\n${MAGENTA}${podcastId}${RESET}:\nDownloaded:\n${eresult}\n")
+        Console.printf("\nDownloaded for ")
+        showPodcast(podcastId, episodes)
       }.recover {
         case e: Exception =>
         logger.error(s"${podcastId}: Got an error ${e.getMessage} while downloading podcast episodes")
@@ -98,11 +98,12 @@ object Podcaster {
   }
 
   // List the podcast feed
-  private def showPodcast(podcastId: String, episodes: Seq[Episode]): Future[Unit] = {
-    logger.info(s"Showing latest episodes of ${podcastId}")
-    val eresult = episodes.zipWithIndex.map((e, i) => s"${i+1}. \"${e.title}\" (published at ${e.pubDate})").mkString("\n")
-    Console.printf(s"\n${MAGENTA}${podcastId}${RESET}:\n${eresult}\n")
-    Future.unit
+  private def showPodcast(podcastId: String, episodes: Seq[Episode]): Unit = {
+    Console.printf(s"${MAGENTA}$podcastId${RESET}:\n")
+    episodes.zipWithIndex.foreach { (e, i) =>
+      val title = if e.title.length <= 70 then e.title else e.title.take(67) + "..."
+      Console.printf(s"%-2d. %-70s ${YELLOW}(%s)${RESET}\n", i+1, title, e.pubDate)
+    }
   }
 
   // A utility method to process podcast config for both show and download actions.
@@ -174,7 +175,11 @@ object Podcaster {
     podcastIdOpt: Option[String],
     @arg(short = 'c', doc = "count of latest podcast episodes to show")
     count: Int = 10): Unit = {
-      val processPodcastEntry = (podcastId: String, episodes: Seq[Episode], mediaDir: Path) => showPodcast(podcastId, episodes.take(count))
+      val processPodcastEntry = (podcastId: String, episodes: Seq[Episode], mediaDir: Path) => {
+        logger.info(s"Showing latest episodes of ${podcastId}")
+        showPodcast(podcastId, episodes.take(count))
+        Future.unit
+      }
       val resultFuture = processPodcasts(podcastIdOpt, processPodcastEntry)
       Await.result(resultFuture, 5.minutes)
   }
