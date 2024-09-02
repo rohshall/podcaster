@@ -3,6 +3,7 @@ package podcaster
 import mainargs.{ParserForMethods, arg, main}
 import org.slf4j.{Logger, LoggerFactory}
 import os.Path
+import requests.RequestFailedException
 import upickle.default.Reader
 
 import java.net.URI
@@ -22,9 +23,11 @@ object Podcaster {
   private val rfc2822Fmt = DateTimeFormatter.RFC_1123_DATE_TIME
 
   // Representation of the settings stored in "~/.podcasts.json". We need to read the settings.
-  private case class Podcast(id: String, url: String) derives Reader
-  private case class Config(mediaDir: String) derives Reader
-  private case class AppSettings(config: Config, podcasts: Array[Podcast]) derives Reader
+  private case class Podcast(id: String, url: String)derives Reader
+
+  private case class Config(mediaDir: String)derives Reader
+
+  private case class AppSettings(config: Config, podcasts: Array[Podcast])derives Reader
 
   // Representation of the state stored in "~/.podcaster_state.json". We need to both read and update the state.
   // Map[String, Set[String]]
@@ -69,8 +72,24 @@ object Podcaster {
     if !episodesDownloaded.contains(episode.guid) then
       logger.info(s"$podcastId: downloading episode \"${episode.title}\" published at ${episode.pubDate} from $downloadUri")
       Future {
-        val readable = requests.get.stream(downloadUri.toString, check = false)
-        os.write.over(downloadPath, readable) }.map(_ => episode)
+        val response = try {
+          requests.get(downloadUri.toString)
+        } catch {
+          case e: RequestFailedException =>
+            e.response.statusCode match {
+              case 302 =>
+                val newLocation = e.response.location.get
+                logger.debug(s"$podcastId: episode \"${episode.title}\" is being redirected to $newLocation")
+                val redirectUri = new URI(newLocation)
+                requests.get(redirectUri.toString)
+              case _ =>
+                logger.error(s"$podcastId: episode \"${episode.title}\" could not be downloaded due to ${e.response.statusCode} ${e.response.text()}")
+                throw e
+            }
+        }
+        os.write.over(downloadPath, response.bytes)
+        episode
+      }
     else
       logger.info(s"$podcastId: episode \"${episode.title}\" already downloaded, skipping..")
       Future.successful(episode)
@@ -78,7 +97,9 @@ object Podcaster {
 
   // Checks the podcast feed and returns episodes
   private def downloadPodcastFeed(podcastUrl: String): Future[Seq[Episode]] = {
-    Future { requests.get(podcastUrl).text() }.map(contents => extractFeed(contents))
+    Future {
+      requests.get(podcastUrl).text()
+    }.map(contents => extractFeed(contents))
   }
 
   // Checks the podcast feed, and downloads the episodes
@@ -97,10 +118,10 @@ object Podcaster {
               episodes
           }
       }).recover {
-        case e: Exception =>
-          logger.error(s"$podcastId: Got an error ${e.getMessage} while downloading podcast episodes")
-          Seq.empty[Episode]
-      }
+      case e: Exception =>
+        logger.error(s"$podcastId: Got an error ${e.getMessage} while downloading podcast episodes")
+        Seq.empty[Episode]
+    }
   }
 
   // List the podcast feed
@@ -108,7 +129,7 @@ object Podcaster {
     Console.printf(s"$MAGENTA$UNDERLINED$podcastId$RESET:\n")
     episodes.zipWithIndex.foreach { (e, i) =>
       val title = if e.title.length <= 70 then e.title else e.title.take(67) + "..."
-      Console.printf(s"%2d. %-70s $YELLOW(%s)$RESET\n", i+1, title, e.pubDate)
+      Console.printf(s"%2d. %-70s $YELLOW(%s)$RESET\n", i + 1, title, e.pubDate)
     }
   }
 
@@ -149,46 +170,46 @@ object Podcaster {
 
   @main
   def download(@arg(short = 'p', doc = "podcast ID, which identifies the podcast")
-    podcastIdOpt: Option[String],
-    @arg(short = 'c', doc = "count of latest podcast episodes to download")
-    count: Int = 3): Unit = {
-      val currentAppState = getCurrentAppState
-      // We will get the updates to be made in the current state in a thread-safe way.
-      val appStateUpdate = TrieMap[String, Set[String]]()
-      val processPodcastEntry = (podcastId: String, episodes: Seq[Episode], mediaDir: Path) => {
-        val latestEpisodes = episodes.take(count)
-        downloadPodcast(podcastId, latestEpisodes, mediaDir, currentAppState.getOrElse(podcastId, Set()))
-          .andThen {
-            case Success(episodes) =>
-              logger.info(s"$podcastId: Downloaded latest episodes")
-              showPodcast(podcastId, episodes)
-              appStateUpdate.put(podcastId, episodes.map(_.guid).toSet)
-          }.map(_ => ())
-      }
-      val resultFuture = processPodcasts(podcastIdOpt, processPodcastEntry)
-      Await.result(resultFuture, count.minutes)
-      // combine the current state and the update.
-      val updatedAppState = currentAppState ++ appStateUpdate.map {
-        case (k, v) => k -> (v ++ currentAppState.getOrElse(k, Set.empty))
-      }
-      updateAppState(updatedAppState) match {
-        case Failure(e) => Future.failed(new RuntimeException(s"Failed to store app state $e"))
-        case Success(_) => logger.info("App state updated")
-      }
+               podcastIdOpt: Option[String],
+               @arg(short = 'c', doc = "count of latest podcast episodes to download")
+               count: Int = 3): Unit = {
+    val currentAppState = getCurrentAppState
+    // We will get the updates to be made in the current state in a thread-safe way.
+    val appStateUpdate = TrieMap[String, Set[String]]()
+    val processPodcastEntry = (podcastId: String, episodes: Seq[Episode], mediaDir: Path) => {
+      val latestEpisodes = episodes.take(count)
+      downloadPodcast(podcastId, latestEpisodes, mediaDir, currentAppState.getOrElse(podcastId, Set()))
+        .andThen {
+          case Success(episodes) =>
+            logger.info(s"$podcastId: Downloaded latest episodes")
+            showPodcast(podcastId, episodes)
+            appStateUpdate.put(podcastId, episodes.map(_.guid).toSet)
+        }.map(_ => ())
+    }
+    val resultFuture = processPodcasts(podcastIdOpt, processPodcastEntry)
+    Await.result(resultFuture, count.minutes)
+    // combine the current state and the update.
+    val updatedAppState = currentAppState ++ appStateUpdate.map {
+      case (k, v) => k -> (v ++ currentAppState.getOrElse(k, Set.empty))
+    }
+    updateAppState(updatedAppState) match {
+      case Failure(e) => Future.failed(new RuntimeException(s"Failed to store app state $e"))
+      case Success(_) => logger.info("App state updated")
+    }
   }
 
   @main
   def show(@arg(short = 'p', doc = "podcast ID, which identifies the podcast")
-    podcastIdOpt: Option[String],
-    @arg(short = 'c', doc = "count of latest podcast episodes to show")
-    count: Int = 10): Unit = {
-      val processPodcastEntry = (podcastId: String, episodes: Seq[Episode], mediaDir: Path) => {
-        logger.info(s"Showing latest episodes of $podcastId")
-        showPodcast(podcastId, episodes.take(count))
-        Future.unit
-      }
-      val resultFuture = processPodcasts(podcastIdOpt, processPodcastEntry)
-      Await.result(resultFuture, 1.minutes)
+           podcastIdOpt: Option[String],
+           @arg(short = 'c', doc = "count of latest podcast episodes to show")
+           count: Int = 10): Unit = {
+    val processPodcastEntry = (podcastId: String, episodes: Seq[Episode], mediaDir: Path) => {
+      logger.info(s"Showing latest episodes of $podcastId")
+      showPodcast(podcastId, episodes.take(count))
+      Future.unit
+    }
+    val resultFuture = processPodcasts(podcastIdOpt, processPodcastEntry)
+    Await.result(resultFuture, 1.minutes)
   }
 
   def main(args: Array[String]): Unit = ParserForMethods(this).runOrExit(args.toIndexedSeq)
