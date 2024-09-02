@@ -99,10 +99,10 @@ object Podcaster {
 
   // List the podcast feed
   private def showPodcast(podcastId: String, episodes: Seq[Episode]): Unit = {
-    Console.printf(s"${MAGENTA}$podcastId${RESET}:\n")
+    Console.printf(s"${MAGENTA}${UNDERLINED}$podcastId${RESET}:\n")
     episodes.zipWithIndex.foreach { (e, i) =>
       val title = if e.title.length <= 70 then e.title else e.title.take(67) + "..."
-      Console.printf(s"%-2d. %-70s ${YELLOW}(%s)${RESET}\n", i+1, title, e.pubDate)
+      Console.printf(s"%2d. %-70s ${YELLOW}(%s)${RESET}\n", i+1, title, e.pubDate)
     }
   }
 
