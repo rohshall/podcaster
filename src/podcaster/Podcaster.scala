@@ -1,13 +1,14 @@
 package podcaster
 
-import org.slf4j.{LoggerFactory, Logger}
-import Console.{GREEN, RED, RESET, YELLOW, YELLOW_B, MAGENTA, MAGENTA_B, UNDERLINED}
 import mainargs.{ParserForMethods, arg, main}
-import upickle.default.Reader
+import org.slf4j.{Logger, LoggerFactory}
 import os.Path
+import upickle.default.Reader
+
 import java.net.URI
 import java.time.LocalDateTime
 import java.time.format.DateTimeFormatter
+import scala.Console.{MAGENTA, RESET, UNDERLINED, YELLOW}
 import scala.collection.concurrent.TrieMap
 import scala.concurrent.ExecutionContext.Implicits.global
 import scala.concurrent.duration.DurationInt
@@ -18,12 +19,12 @@ import scala.xml.XML
 
 object Podcaster {
 
-  val rfc2822Fmt = DateTimeFormatter.RFC_1123_DATE_TIME;
+  private val rfc2822Fmt = DateTimeFormatter.RFC_1123_DATE_TIME
 
   // Representation of the settings stored in "~/.podcasts.json". We need to read the settings.
-  case class Podcast(id: String, url: String) derives Reader
-  case class Config(mediaDir: String) derives Reader
-  case class AppSettings(config: Config, podcasts: Array[Podcast]) derives Reader
+  private case class Podcast(id: String, url: String) derives Reader
+  private case class Config(mediaDir: String) derives Reader
+  private case class AppSettings(config: Config, podcasts: Array[Podcast]) derives Reader
 
   // Representation of the state stored in "~/.podcaster_state.json". We need to both read and update the state.
   // Map[String, Set[String]]
@@ -36,7 +37,7 @@ object Podcaster {
   private val logger: Logger = LoggerFactory.getLogger("podcaster")
 
   // Parse the config from "~/.podcasts.json".
-  private def parseSettings(): Try[AppSettings] = {
+  private def parseSettings: Try[AppSettings] = {
     val source = os.home / ".podcasts.json"
     logger.info(s"Parsing the settings file $source")
     Try(os.read(source)).map(contents => upickle.default.read[AppSettings](contents))
@@ -59,7 +60,7 @@ object Podcaster {
   }
 
   // Download the podcast episode
-  private def downloadEpisode(podcastId: String, episode: Episode, podcastDirPath: Path, episodesDownloaded: Set[String]): Future[Unit] = {
+  private def downloadEpisode(podcastId: String, episode: Episode, podcastDirPath: Path, episodesDownloaded: Set[String]): Future[Episode] = {
     val uri = new URI(episode.url)
     // Remove the query params and the fragment from the URI
     val downloadUri = new URI(uri.getScheme, null, uri.getHost, uri.getPort, uri.getPath, null, null)
@@ -67,14 +68,12 @@ object Podcaster {
     val downloadPath = podcastDirPath / downloadFileName
     if !episodesDownloaded.contains(episode.guid) then
       logger.info(s"$podcastId: downloading episode \"${episode.title}\" published at ${episode.pubDate} from $downloadUri")
-      Future { os.write.over(downloadPath, requests.get.stream(downloadUri.toString)) }
-        .recover {
-          case e: Exception =>
-            logger.error(s"$podcastId: episode \"${episode.title}\" could not be downloaded due to ${e.getMessage}")
-        }
+      Future {
+        val readable = requests.get.stream(downloadUri.toString, check = false)
+        os.write.over(downloadPath, readable) }.map(_ => episode)
     else
       logger.info(s"$podcastId: episode \"${episode.title}\" already downloaded, skipping..")
-      Future.unit
+      Future.successful(episode)
   }
 
   // Checks the podcast feed and returns episodes
@@ -83,31 +82,38 @@ object Podcaster {
   }
 
   // Checks the podcast feed, and downloads the episodes
-  private def downloadPodcast(podcastId: String, episodes: Seq[Episode], mediaDir: Path, episodesDownloaded: Set[String]): Future[Unit] = {
-    logger.info(s"Downloading latest episodes of ${podcastId}")
+  private def downloadPodcast(podcastId: String, episodes: Seq[Episode], mediaDir: Path, episodesDownloaded: Set[String]): Future[Seq[Episode]] = {
+    logger.info(s"Downloading latest episodes of $podcastId")
     val podcastDirPath = mediaDir / podcastId
     os.makeDir.all(podcastDirPath)
-    Future.traverse(episodes)(episode => downloadEpisode(podcastId, episode, podcastDirPath, episodesDownloaded))
-      .map { _ => 
-        Console.printf("\nDownloaded for ")
-        showPodcast(podcastId, episodes)
-      }.recover {
+    // Try to download all episodes concurrently, and log the success/failure of each episode download.
+    val episodesFutures = episodes.map(downloadEpisode(podcastId, _, podcastDirPath, episodesDownloaded))
+    episodesFutures.foldLeft(Future.successful(Seq.empty[Episode]))((acc, f) =>
+      acc.flatMap { episodes =>
+        f.map(episode => episodes :+ episode)
+          .recover {
+            case e: Exception =>
+              logger.error(s"$podcastId: an episode could not be downloaded due to ${e.getMessage}")
+              episodes
+          }
+      }).recover {
         case e: Exception =>
-        logger.error(s"${podcastId}: Got an error ${e.getMessage} while downloading podcast episodes")
+          logger.error(s"$podcastId: Got an error ${e.getMessage} while downloading podcast episodes")
+          Seq.empty[Episode]
       }
   }
 
   // List the podcast feed
   private def showPodcast(podcastId: String, episodes: Seq[Episode]): Unit = {
-    Console.printf(s"${MAGENTA}${UNDERLINED}$podcastId${RESET}:\n")
+    Console.printf(s"$MAGENTA$UNDERLINED$podcastId$RESET:\n")
     episodes.zipWithIndex.foreach { (e, i) =>
       val title = if e.title.length <= 70 then e.title else e.title.take(67) + "..."
-      Console.printf(s"%2d. %-70s ${YELLOW}(%s)${RESET}\n", i+1, title, e.pubDate)
+      Console.printf(s"%2d. %-70s $YELLOW(%s)$RESET\n", i+1, title, e.pubDate)
     }
   }
 
   // A utility method to process podcast config for both show and download actions.
-  private def processPodcasts(podcastIdOpt: Option[String], processPodcastEntry: (String, Seq[Episode], Path) => Future[Unit]): Future[Unit] = parseSettings() match {
+  private def processPodcasts(podcastIdOpt: Option[String], processPodcastEntry: (String, Seq[Episode], Path) => Future[Unit]): Future[Unit] = parseSettings match {
     case Failure(e) => Future.failed(new RuntimeException(s"Failed to parse config $e"))
     case Success(settings) =>
       val mediaDir = Path(settings.config.mediaDir)
@@ -127,7 +133,7 @@ object Podcaster {
   }
 
   // Update the state
-  def updateAppState(appState: Map[String, Set[String]]): Try[Unit] = {
+  private def updateAppState(appState: Map[String, Set[String]]): Try[Unit] = {
     val dest = os.home / ".podcaster_state.json"
     logger.info(s"Storing the state in $dest")
     val contents = upickle.default.write[Map[String, Set[String]]](appState, indent = 4, sortKeys = true)
@@ -135,15 +141,10 @@ object Podcaster {
   }
 
   // Get the current app state, and if the file does not exist, return the default, empty state.
-  def getCurrentAppState(): Map[String, Set[String]] = {
+  private def getCurrentAppState: Map[String, Set[String]] = {
     val source = os.home / ".podcaster_state.json"
     logger.info(s"Getting the state from $source")
     Try(os.read(source)).map(contents => upickle.default.read[Map[String, Set[String]]](contents)).getOrElse(Map[String, Set[String]]())
-  }
-
-  // Utility method to combine the current state and the update.
-  def combineSets[K, V](a: Map[K, Set[V]], b: TrieMap[K, Set[V]]): Map[K, Set[V]] = {
-    a ++ b.map { case (k, v) => k -> (v ++ a.getOrElse(k, Set.empty)) }
   }
 
   @main
@@ -151,19 +152,25 @@ object Podcaster {
     podcastIdOpt: Option[String],
     @arg(short = 'c', doc = "count of latest podcast episodes to download")
     count: Int = 3): Unit = {
-      val currentAppState : Map[String, Set[String]] = getCurrentAppState()
+      val currentAppState = getCurrentAppState
       // We will get the updates to be made in the current state in a thread-safe way.
       val appStateUpdate = TrieMap[String, Set[String]]()
       val processPodcastEntry = (podcastId: String, episodes: Seq[Episode], mediaDir: Path) => {
         val latestEpisodes = episodes.take(count)
-        downloadPodcast(podcastId, latestEpisodes, mediaDir, currentAppState.get(podcastId).getOrElse(Set()))
+        downloadPodcast(podcastId, latestEpisodes, mediaDir, currentAppState.getOrElse(podcastId, Set()))
           .andThen {
-            case Success(_) => appStateUpdate.put(podcastId, latestEpisodes.map(_.guid).toSet)
-          }
+            case Success(episodes) =>
+              logger.info(s"$podcastId: Downloaded latest episodes")
+              showPodcast(podcastId, episodes)
+              appStateUpdate.put(podcastId, episodes.map(_.guid).toSet)
+          }.map(_ => ())
       }
       val resultFuture = processPodcasts(podcastIdOpt, processPodcastEntry)
-      Await.result(resultFuture, 5.minutes)
-      val updatedAppState = combineSets[String, String](currentAppState, appStateUpdate)
+      Await.result(resultFuture, count.minutes)
+      // combine the current state and the update.
+      val updatedAppState = currentAppState ++ appStateUpdate.map {
+        case (k, v) => k -> (v ++ currentAppState.getOrElse(k, Set.empty))
+      }
       updateAppState(updatedAppState) match {
         case Failure(e) => Future.failed(new RuntimeException(s"Failed to store app state $e"))
         case Success(_) => logger.info("App state updated")
@@ -176,12 +183,12 @@ object Podcaster {
     @arg(short = 'c', doc = "count of latest podcast episodes to show")
     count: Int = 10): Unit = {
       val processPodcastEntry = (podcastId: String, episodes: Seq[Episode], mediaDir: Path) => {
-        logger.info(s"Showing latest episodes of ${podcastId}")
+        logger.info(s"Showing latest episodes of $podcastId")
         showPodcast(podcastId, episodes.take(count))
         Future.unit
       }
       val resultFuture = processPodcasts(podcastIdOpt, processPodcastEntry)
-      Await.result(resultFuture, 5.minutes)
+      Await.result(resultFuture, 1.minutes)
   }
 
   def main(args: Array[String]): Unit = ParserForMethods(this).runOrExit(args.toIndexedSeq)
