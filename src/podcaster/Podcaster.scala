@@ -72,22 +72,20 @@ object Podcaster {
     if !episodesDownloaded.contains(episode.guid) then
       logger.info(s"$podcastId: downloading episode \"${episode.title}\" published at ${episode.pubDate} from $downloadUri")
       Future {
-        val response = try {
-          requests.get(downloadUri.toString)
+        try {
+          os.write.over(downloadPath, requests.get.stream(downloadUri.toString))
         } catch {
           case e: RequestFailedException =>
             e.response.statusCode match {
               case 302 =>
-                val newLocation = e.response.location.get
-                logger.debug(s"$podcastId: episode \"${episode.title}\" is being redirected to $newLocation")
-                val redirectUri = new URI(newLocation)
-                requests.get(redirectUri.toString)
+                val redirectUrl = e.response.location.get
+                logger.debug(s"$podcastId: episode \"${episode.title}\" is being redirected to $redirectUrl")
+                os.write.over(downloadPath, requests.get.stream(redirectUrl))
               case _ =>
                 logger.error(s"$podcastId: episode \"${episode.title}\" could not be downloaded due to ${e.response.statusCode} ${e.response.text()}")
                 throw e
             }
         }
-        os.write.over(downloadPath, response.bytes)
         episode
       }
     else
